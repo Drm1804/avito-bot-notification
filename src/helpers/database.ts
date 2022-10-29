@@ -6,7 +6,8 @@ import { conf } from '../../config.js';
 class DatabaseService {
   app: FirebaseApp
   db: Database
-  initSkip = true;
+  initSkip = {};
+  unsubscribers = [];
 
   constructor() {
     try{
@@ -47,23 +48,61 @@ class DatabaseService {
       .catch(err => reject(err))
     })
   }
-  // подписка на обновления объявлений
 
-  async updateAds(cb): Promise<void> {
-    onChildAdded(ref(this.db, 'ads'), (snapshot) => {
+
+
+  // подписка на обновления объявлений одного треда (типа объявления)
+  async updateAdsThread(key: string, cb):Promise<void> {
+    this.initSkip[key] = true;
+    const unsubscribe = onChildAdded(ref(this.db, 'ads/' + key), (snapshot) => {
       const data: Collection<Ad> = snapshot.val();
+
+      console.log('updateAdsThread', key);
 
       // При первом запуске начинают лететь уже добавленные в базу поля
       // мы их скипаем, чтобы следить только за новыми
       setTimeout(() => {
-        this.initSkip = false;
+        this.initSkip[key] = false;
       })
 
-      if(this.initSkip) {
+      if(this.initSkip[key]) {
         return
       }
 
       cb(data);
+    })
+
+    this.unsubscribers.push(unsubscribe);
+  }
+
+
+  //получение списка тредов (типов оббъявлений)
+
+  getAllAdsThread(): Promise<string[]> {
+    return new Promise((resolve, reject ) => {
+      this.unsubscribers.forEach(unsubscribe => unsubscribe())
+
+      get(child(ref(this.db), 'ads'))
+        .then((snapshot) => {
+          const val = snapshot.val();
+          return resolve(Object.keys(val))
+        })
+        .catch(err => reject(err))
+    })
+  }
+
+
+
+  async updateAds(cb): Promise<void> {
+
+    // нужно подписаться на список тредов, и при его изменении перезапрашивать его
+
+    onChildAdded(ref(this.db, 'ads'), async () => {
+      const keys = await this.getAllAdsThread();
+
+      for(const key of keys) {
+        this.updateAdsThread(key, cb)
+      }
     })
   }
 }
